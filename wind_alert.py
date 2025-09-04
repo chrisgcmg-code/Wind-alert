@@ -9,7 +9,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import WebDriverException, TimeoutException
+from selenium.common.exceptions import WebDriverException, TimeoutException, ElementClickInterceptedException
 from webdriver_manager.chrome import ChromeDriverManager
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
@@ -56,16 +56,18 @@ def get_model2_values(driver):
 
 def click_next_day(driver):
     try:
-        # Wait for the button to be present
-        WebDriverWait(driver, MAX_WAIT).until(
-            EC.presence_of_element_located((By.ID, "NextButton"))
-        )
-        # Execute JavaScript to click the button
-        driver.execute_script("document.getElementById('NextButton').click();")
-        time.sleep(5)
-        return True
+        wait = WebDriverWait(driver, MAX_WAIT)
+        btn = wait.until(EC.element_to_be_clickable((By.ID, "NextButton")))
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+        time.sleep(0.5)
+        try:
+            btn.click()
+            return True
+        except ElementClickInterceptedException:
+            driver.execute_script("arguments[0].click();", btn)
+            return True
     except Exception as e:
-        print("❌ Failed to click 'Next Day' button:", e)
+        print("❌ Failed to click 'Next Day' button using Selenium:", e)
         return False
 
 def send_email(subject: str, body: str):
