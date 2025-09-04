@@ -1,29 +1,30 @@
-name: Wind Alert
+name: Wind Alert Monitor
 
 on:
   schedule:
-    - cron: '0 12 * * *'  # Runs every day at 12:00 UTC
+    - cron: '0 14 * * *'  # Runs daily at 2 PM UTC (adjust as needed)
   workflow_dispatch:
 
 jobs:
-  check_wind_forecast:
+  check-wind:
     runs-on: ubuntu-latest
+    env:
+      SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+      EMAIL_TO: ${{ secrets.EMAIL_TO }}
+      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.x'
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install selenium webdriver-manager sendgrid
-    - name: Run wind alert script
-      env:
-        SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
-        ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
-      run: python wind_alert.py
+      - name: Install dependencies
+        run: |
+          pip install selenium webdriver-manager requests
+
+      - name: Run wind alert script
+        run: python wind_alert.py
