@@ -9,7 +9,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import WebDriverException, TimeoutException, ElementClickInterceptedException
+from selenium.common.exceptions import WebDriverException, ElementClickInterceptedException
 from webdriver_manager.chrome import ChromeDriverManager
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
@@ -32,7 +32,6 @@ def save_artifacts(driver, name: str):
         (DEBUG_DIR / f"{name}.html").write_text(driver.page_source, encoding="utf-8")
     except Exception:
         pass
-
 def build_driver():
     opts = Options()
     if HEADLESS:
@@ -68,6 +67,7 @@ def click_next_day(driver):
             return True
     except Exception as e:
         print("❌ Failed to click 'Next Day' button using Selenium:", e)
+        save_artifacts(driver, "click_failed")
         return False
 
 def send_email(subject: str, body: str):
@@ -99,7 +99,6 @@ def main():
         print("❌ Could not launch Chrome WebDriver. Is Chrome installed?")
         print(e)
         return
-
     try:
         driver.get(URL)
         WebDriverWait(driver, MAX_WAIT).until(
@@ -142,4 +141,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
