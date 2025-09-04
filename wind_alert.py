@@ -1,5 +1,8 @@
-import time, re, sys, traceback
+import time, re, sys, traceback, os
 from pathlib import Path
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
+
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -10,31 +13,32 @@ from selenium.common.exceptions import (
     TimeoutException, NoSuchElementException, ElementClickInterceptedException, WebDriverException
 )
 from webdriver_manager.chrome import ChromeDriverManager
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
-import os
 
 # --------------- CONFIG ---------------
 URL        = "https://bigwavedave.ca/jerichobch.html?site=20"
 THRESHOLD  = 10.0               # knots
-HEADLESS   = True               # set True once it's working
-MAX_WAIT   = 40                 # increased from 20 to 40 seconds
-
-EMAIL_TO   = os.getenv("ALERT_EMAIL")
-SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+HEADLESS   = True
+MAX_WAIT   = 40                 # seconds to wait for UI/data changes
 
 DEBUG_DIR = Path("debug"); DEBUG_DIR.mkdir(exist_ok=True)
 
 # --------------- Utilities ---------------
 def send_email(subject: str, body: str):
+    sendgrid_api_key = os.getenv('SENDGRID_API_KEY')
+    alert_email = os.getenv('ALERT_EMAIL')
+    if not sendgrid_api_key or not alert_email:
+        print("❌ Missing SENDGRID_API_KEY or ALERT_EMAIL environment variables.")
+        return
+
     message = Mail(
         from_email='alert@windforecast.com',
-        to_emails=EMAIL_TO,
+        to_emails=alert_email,
         subject=subject,
         html_content=f"<p>{body.replace(chr(10), '<br>')}</p>"
     )
+
     try:
-        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        sg = SendGridAPIClient(sendgrid_api_key)
         response = sg.send(message)
         print(f"✅ Alert email sent via SendGrid. Status code: {response.status_code}")
     except Exception as e:
@@ -122,10 +126,12 @@ def wait_for_model2_change(driver, old_values, timeout=MAX_WAIT):
 # ---------------- Button click ----------------
 def click_next_day(driver):
     wait = WebDriverWait(driver, MAX_WAIT)
+
+    # Try direct by id
     try:
         btn = wait.until(EC.element_to_be_clickable((By.ID, "NextButton")))
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
-        time.sleep(0.2)
+        time.sleep(0.5)
         try:
             btn.click()
             return True
@@ -135,27 +141,9 @@ def click_next_day(driver):
     except Exception:
         pass
 
-    candidates = [
-        (By.CSS_SELECTOR, "button#NextButton"),
-        (By.CSS_SELECTOR, "button.button.smallbutton[title='Next day']"),
-        (By.XPATH, "//button[@id='NextButton' or @title='Next day']"),
-    ]
-    for by, sel in candidates:
-        try:
-            el = wait.until(EC.element_to_be_clickable((by, sel)))
-            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
-            time.sleep(0.2)
-            try:
-                el.click()
-                return True
-            except ElementClickInterceptedException:
-                driver.execute_script("arguments[0].click();", el)
-                return True
-        except Exception:
-            continue
-
+    # Fallback: use JS directly
     try:
-        driver.execute_script("if (typeof ChangeDate === 'function') ChangeDate(1);")
+        driver.execute_script("ChangeDate(1);")
         return True
     except Exception:
         return False
@@ -173,14 +161,14 @@ def main():
         WebDriverWait(driver, MAX_WAIT).until(
             lambda d: d.execute_script("return document.readyState") == "complete"
         )
-        time.sleep(1.5)
+        time.sleep(2)
         save_artifacts(driver, "loaded_root")
 
         before_vals = get_model2_values(driver)
 
         if not click_next_day(driver):
-            print("⚠️ Could not click 'Next Day' via id/selectors; tried ChangeDate(1) as fallback.")
-        time.sleep(5)  # Added sleep to allow chart to load
+            print("⚠️ Could not click 'Next Day' via id or JS fallback.")
+        time.sleep(5)
 
         after_vals = wait_for_model2_change(driver, before_vals, timeout=MAX_WAIT)
         if not after_vals:
@@ -197,10 +185,7 @@ def main():
                 f"Model 2 next-day forecast exceeds {THRESHOLD} knots.\n"
                 f"Max observed: {model2_max:.2f} kn.\n\nLink: {URL}"
             )
-            try:
-                send_email("Wind Alert: Model 2 exceeds threshold", body)
-            except Exception as e:
-                print("❌ Email send failed:", e)
+            send_email("Wind Alert: Model 2 exceeds threshold", body)
         else:
             print(f"✅ No alert. Max {model2_max:.2f} kn ≤ {THRESHOLD:.2f} kn")
 
@@ -213,5 +198,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
