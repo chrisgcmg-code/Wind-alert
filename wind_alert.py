@@ -32,6 +32,7 @@ def save_artifacts(driver, name: str):
         (DEBUG_DIR / f"{name}.html").write_text(driver.page_source, encoding="utf-8")
     except Exception:
         pass
+
 def build_driver():
     opts = Options()
     if HEADLESS:
@@ -99,6 +100,7 @@ def main():
         print("❌ Could not launch Chrome WebDriver. Is Chrome installed?")
         print(e)
         return
+
     try:
         driver.get(URL)
         WebDriverWait(driver, MAX_WAIT).until(
@@ -130,14 +132,4 @@ def main():
             )
             send_email("Wind Alert: Model 2 exceeds threshold", body)
         else:
-            print(f"✅ No alert. Max {model2_max:.2f} kn ≤ {THRESHOLD:.2f} kn")
-
-    except Exception as e:
-        print("❌ Unhandled error:", e)
-        traceback.print_exc()
-        save_artifacts(driver, "exception")
-    finally:
-        driver.quit()
-
-if __name__ == "__main__":
-    main()
+            print(f"✅ No alert. Max {model2_max:.2f} kn ≤
