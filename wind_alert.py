@@ -24,10 +24,14 @@ DEBUG_DIR.mkdir(exist_ok=True)
 
 # --------------- Utilities ---------------
 def save_artifacts(driver, name: str):
-    try: driver.save_screenshot(str(DEBUG_DIR / f"{name}.png"))
-    except: pass
-    try: (DEBUG_DIR / f"{name}.html").write_text(driver.page_source, encoding="utf-8")
-    except: pass
+    try:
+        driver.save_screenshot(str(DEBUG_DIR / f"{name}.png"))
+    except Exception:
+        pass
+    try:
+        (DEBUG_DIR / f"{name}.html").write_text(driver.page_source, encoding="utf-8")
+    except Exception:
+        pass
 
 def build_driver():
     opts = Options()
@@ -85,4 +89,49 @@ def main():
     try:
         driver = build_driver()
     except WebDriverException as e:
-       
+        print("❌ Could not launch Chrome WebDriver. Is Chrome installed?")
+        print(e)
+        return
+
+    try:
+        driver.get(URL)
+        WebDriverWait(driver, MAX_WAIT).until(
+            lambda d: d.execute_script("return document.readyState") == "complete"
+        )
+        time.sleep(2)
+        save_artifacts(driver, "loaded_root")
+
+        before_vals = get_model2_values(driver)
+
+        if not click_next_day(driver):
+            print("⚠️ Could not click 'Next Day' via JS fallback.")
+        time.sleep(5)
+
+        after_vals = get_model2_values(driver)
+        if not after_vals or after_vals == before_vals:
+            print("⚠️ Could not find Model 2 data after attempting 'Next Day'.")
+            save_artifacts(driver, "no_model2_after")
+            return
+
+        model2_max = max(after_vals)
+        print(f"ℹ️ Model 2 points: {len(after_vals)}  |  Max: {model2_max:.2f} kn")
+
+        if model2_max > THRESHOLD:
+            print(f"🚨 ALERT: {model2_max:.2f} kn > {THRESHOLD:.2f} kn")
+            body = (
+                f"Model 2 next-day forecast exceeds {THRESHOLD} knots.\n"
+                f"Max observed: {model2_max:.2f} kn.\n\nLink: {URL}"
+            )
+            send_email("Wind Alert: Model 2 exceeds threshold", body)
+        else:
+            print(f"✅ No alert. Max {model2_max:.2f} kn ≤ {THRESHOLD:.2f} kn")
+
+    except Exception as e:
+        print("❌ Unhandled error:", e)
+        traceback.print_exc()
+        save_artifacts(driver, "exception")
+    finally:
+        driver.quit()
+
+if __name__ == "__main__":
+    main()
