@@ -1,8 +1,4 @@
-import os
-import time
-import re
-import sys
-import traceback
+import time, re, sys, traceback
 from pathlib import Path
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -16,32 +12,29 @@ from selenium.common.exceptions import (
 from webdriver_manager.chrome import ChromeDriverManager
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
+import os
 
 # --------------- CONFIG ---------------
 URL        = "https://bigwavedave.ca/jerichobch.html?site=20"
-THRESHOLD  = 10.0              # knots
-HEADLESS   = True              # set True once it's working
-MAX_WAIT   = 20                # seconds to wait for UI/data changes
+THRESHOLD  = 10.0               # knots
+HEADLESS   = True               # set True once it's working
+MAX_WAIT   = 40                 # increased from 20 to 40 seconds
+
+EMAIL_TO   = os.getenv("ALERT_EMAIL")
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
 
 DEBUG_DIR = Path("debug"); DEBUG_DIR.mkdir(exist_ok=True)
 
 # --------------- Utilities ---------------
 def send_email(subject: str, body: str):
-    sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
-    alert_email = os.getenv("ALERT_EMAIL")
-    if not sendgrid_api_key or not alert_email:
-        print("❌ Missing SENDGRID_API_KEY or ALERT_EMAIL environment variables.")
-        return
-
     message = Mail(
         from_email='alert@windforecast.com',
-        to_emails=alert_email,
+        to_emails=EMAIL_TO,
         subject=subject,
-        plain_text_content=body
+        html_content=f"<p>{body.replace(chr(10), '<br>')}</p>"
     )
-
     try:
-        sg = SendGridAPIClient(sendgrid_api_key)
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
         response = sg.send(message)
         print(f"✅ Alert email sent via SendGrid. Status code: {response.status_code}")
     except Exception as e:
@@ -187,7 +180,7 @@ def main():
 
         if not click_next_day(driver):
             print("⚠️ Could not click 'Next Day' via id/selectors; tried ChangeDate(1) as fallback.")
-        time.sleep(1.0)
+        time.sleep(5)  # Added sleep to allow chart to load
 
         after_vals = wait_for_model2_change(driver, before_vals, timeout=MAX_WAIT)
         if not after_vals:
@@ -204,7 +197,10 @@ def main():
                 f"Model 2 next-day forecast exceeds {THRESHOLD} knots.\n"
                 f"Max observed: {model2_max:.2f} kn.\n\nLink: {URL}"
             )
-            send_email("Wind Alert: Model 2 exceeds threshold", body)
+            try:
+                send_email("Wind Alert: Model 2 exceeds threshold", body)
+            except Exception as e:
+                print("❌ Email send failed:", e)
         else:
             print(f"✅ No alert. Max {model2_max:.2f} kn ≤ {THRESHOLD:.2f} kn")
 
@@ -217,4 +213,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
