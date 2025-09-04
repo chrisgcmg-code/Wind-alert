@@ -9,7 +9,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import WebDriverException
+from selenium.common.exceptions import WebDriverException, TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
@@ -56,11 +56,16 @@ def get_model2_values(driver):
 
 def click_next_day(driver):
     try:
-        driver.execute_script("ChangeDate(1);")
+        # Wait for the button to be present
+        WebDriverWait(driver, MAX_WAIT).until(
+            EC.presence_of_element_located((By.ID, "NextButton"))
+        )
+        # Execute JavaScript to click the button
+        driver.execute_script("document.getElementById('NextButton').click();")
         time.sleep(5)
         return True
     except Exception as e:
-        print("❌ Failed to execute ChangeDate(1):", e)
+        print("❌ Failed to click 'Next Day' button:", e)
         return False
 
 def send_email(subject: str, body: str):
@@ -104,7 +109,7 @@ def main():
         before_vals = get_model2_values(driver)
 
         if not click_next_day(driver):
-            print("⚠️ Could not click 'Next Day' via JS fallback.")
+            print("⚠️ Could not click 'Next Day' button.")
         time.sleep(5)
 
         after_vals = get_model2_values(driver)
@@ -135,3 +140,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
