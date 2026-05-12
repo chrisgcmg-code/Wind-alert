@@ -20,7 +20,16 @@ jobs:
           pip install -r requirements.txt
           playwright install chromium
           playwright install-deps chromium
+      - name: Verify script exists
+        run: |
+          echo "=== FILES IN REPO ==="
+          ls -la
+          echo "=== FIRST 5 LINES OF check_wind.py ==="
+          head -5 check_wind.py
       - name: Run wind check
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-        run: python check_wind.py
+        run: |
+          echo "Starting wind check script..."
+          python check_wind.py 2>&1
+          echo "Script finished with exit code $?"
