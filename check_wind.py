@@ -61,23 +61,25 @@ async def get_wind_data():
                     if x is not None and y is not None:
                         all_series[name][x] = y
 
-        # Click "Next" to get tomorrow's data for full 48-hour coverage
-        try:
-            next_btn = page.locator("text=>>").first
-            if await next_btn.is_visible():
-                await next_btn.click()
-                await page.wait_for_timeout(5000)
-                tmrw_data = await extract_chart_data(page)
-                if tmrw_data:
-                    for s in tmrw_data:
-                        name = s["name"]
-                        if name not in all_series:
-                            all_series[name] = {}
-                        for x, y in s["data"]:
-                            if x is not None and y is not None:
-                                all_series[name][x] = y
-        except Exception as e:
-            print(f"Could not load next day (non-fatal): {e}")
+# Click ">>" twice to get tomorrow and day-after-tomorrow
+        for day in range(1, 3):
+            try:
+                next_btn = page.locator("text=>>").first
+                if await next_btn.is_visible():
+                    await next_btn.click()
+                    await page.wait_for_timeout(5000)
+                    day_data = await extract_chart_data(page)
+                    if day_data:
+                        for s in day_data:
+                            name = s["name"]
+                            if name not in all_series:
+                                all_series[name] = {}
+                            for x, y in s["data"]:
+                                if x is not None and y is not None:
+                                    all_series[name][x] = y
+                    print(f"  Loaded day +{day}")
+            except Exception as e:
+                print(f"Could not load day +{day} (non-fatal): {e}")
 
         await browser.close()
 
