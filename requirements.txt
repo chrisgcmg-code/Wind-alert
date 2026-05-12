@@ -1,0 +1,10 @@
+
+requirements_txt = """playwright==1.52.0
+httpx==0.28.1
+"""
+
+with open("requirements.txt", "w") as f:
+    f.write(requirements_txt.strip())
+
+print(requirements_txt.strip())
+
