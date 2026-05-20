@@ -9,7 +9,7 @@ on:
 jobs:
   check-wind:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     env:
       PYTHONUNBUFFERED: '1'
     steps:
@@ -18,7 +18,10 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps chromium
       - name: Run wind check
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
