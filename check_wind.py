@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Jericho Beach Wind Forecast Alert
-Loads bigwavedave.ca/jerichobch.html for each day as a fresh page visit.
-Each full page load passes Cloudflare. Extracts Model2 from Highcharts.
+Loads bigwavedave.ca once, then sets datepicker + calls getMet() for each day.
+Waits for Cloudflare challenge on initial load only.
 """
 
 import asyncio
@@ -17,6 +17,28 @@ BASE_URL = "https://bigwavedave.ca/jerichobch.html?site=20"
 WIND_THRESHOLD = 10
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "")
 PACIFIC = timezone(timedelta(hours=-7))
+
+
+async def wait_for_highcharts(page, timeout=30):
+    """Wait for Highcharts to be available and have model data."""
+    for i in range(timeout):
+        ready = await page.evaluate(r"""
+            () => {
+                try {
+                    if (typeof Highcharts === 'undefined') return false;
+                    const charts = Highcharts.charts.filter(c => c);
+                    if (!charts.length) return false;
+                    for (const s of charts[0].series) {
+                        if (/model/i.test(s.name) && s.yData && s.yData.some(v => typeof v === 'number')) return true;
+                    }
+                    return false;
+                } catch(e) { return false; }
+            }
+        """)
+        if ready:
+            return True
+        await page.wait_for_timeout(1000)
+    return False
 
 
 async def get_model_values(page):
@@ -51,71 +73,6 @@ async def get_model_values(page):
     """)
 
 
-async def load_day(context, day_str):
-    """Load a fresh page for the given day and extract model data."""
-    page = await context.new_page()
-    await page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => false });")
-
-    print(f"  Loading page...", flush=True)
-    try:
-        await page.goto(BASE_URL, wait_until="commit", timeout=60000)
-    except Exception as e:
-        print(f"  Navigation error: {e}", flush=True)
-        await page.close()
-        return None
-
-    await page.wait_for_timeout(10000)
-
-    has_hc = await page.evaluate("() => typeof Highcharts !== 'undefined'")
-    if not has_hc:
-        await page.wait_for_timeout(10000)
-        has_hc = await page.evaluate("() => typeof Highcharts !== 'undefined'")
-    if not has_hc:
-        print(f"  Highcharts not available", flush=True)
-        await page.close()
-        return None
-
-    # If not today, set the datepicker and trigger getMet
-    current_dp = await page.evaluate("() => document.getElementById('datepicker')?.value")
-    print(f"  Datepicker loaded as: {current_dp}", flush=True)
-
-    if current_dp != day_str:
-        print(f"  Setting datepicker to {day_str}...", flush=True)
-        await page.evaluate(f"""
-            () => {{
-                document.getElementById('datepicker').value = '{day_str}';
-                if (typeof getMet === 'function') getMet(0);
-            }}
-        """)
-        await page.wait_for_timeout(8000)
-
-        new_dp = await page.evaluate("() => document.getElementById('datepicker')?.value")
-        print(f"  Datepicker now: {new_dp}", flush=True)
-
-    # Wait for Highcharts to have data
-    for i in range(20):
-        ready = await page.evaluate("""
-            () => {
-                try {
-                    const charts = Highcharts.charts.filter(c => c);
-                    if (!charts.length) return false;
-                    for (const s of charts[0].series) {
-                        if (/model/i.test(s.name) && s.yData && s.yData.some(v => typeof v === 'number')) return true;
-                    }
-                    return false;
-                } catch(e) { return false; }
-            }
-        """)
-        if ready:
-            print(f"  Chart ready after {i+1}s", flush=True)
-            break
-        await page.wait_for_timeout(1000)
-
-    data = await get_model_values(page)
-    await page.close()
-    return data
-
-
 async def main():
     print("=" * 50, flush=True)
     print("Jericho Beach Wind Alert Check", flush=True)
@@ -135,19 +92,57 @@ async def main():
             user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
             viewport={'width': 1920, 'height': 1080},
         )
+        page = await context.new_page()
+        await page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => false });")
 
-        all_data = {}  # day -> {model_name -> [{time, value}]}
+        # Load the page once
+        print(f"\nLoading: {BASE_URL}", flush=True)
+        await page.goto(BASE_URL, wait_until="commit", timeout=60000)
+        print("  Waiting for page to settle...", flush=True)
+        await page.wait_for_timeout(12000)
+
+        has_hc = await page.evaluate("() => typeof Highcharts !== 'undefined'")
+        print(f"  Highcharts available: {has_hc}", flush=True)
+        if not has_hc:
+            print("  Waiting additional 15s...", flush=True)
+            await page.wait_for_timeout(15000)
+            has_hc = await page.evaluate("() => typeof Highcharts !== 'undefined'")
+            print(f"  Highcharts available (2nd check): {has_hc}", flush=True)
+            if not has_hc:
+                print("ERROR: Highcharts never loaded", flush=True)
+                await browser.close()
+                sys.exit(1)
+
+        has_model = await wait_for_highcharts(page)
+        print(f"  Model data ready: {has_model}", flush=True)
+
+        all_data = {}
 
         for day_str in days:
             print(f"\n--- {day_str} ---", flush=True)
-            data = await load_day(context, day_str)
+
+            # Set datepicker and call getMet to load the day's data
+            current_dp = await page.evaluate("() => document.getElementById('datepicker')?.value")
+            if current_dp != day_str:
+                print(f"  Setting datepicker from {current_dp} to {day_str}...", flush=True)
+                await page.evaluate(f"document.getElementById('datepicker').value = '{day_str}'")
+                await page.evaluate("getMet(0)")
+                # Wait for chart to update with new data
+                await page.wait_for_timeout(8000)
+            else:
+                print(f"  Already on {day_str}", flush=True)
+
+            dp_now = await page.evaluate("() => document.getElementById('datepicker')?.value")
+            print(f"  Datepicker: {dp_now}", flush=True)
+
+            data = await get_model_values(page)
             if data:
                 all_data[day_str] = data
                 for model_name, points in data.items():
                     vals = [pt["value"] for pt in points]
                     print(f"  {model_name}: {len(vals)} points, values: {vals}", flush=True)
             else:
-                print(f"  No model data for {day_str}", flush=True)
+                print(f"  No model data", flush=True)
 
         await browser.close()
 
@@ -179,12 +174,10 @@ async def main():
         lines = ["Jericho Beach Wind Alert!", ""]
         for w in windy_alerts:
             lines.append(f"{w['day']} {w['model']}: peak {w['peak']:.0f}kt ({w['count']} readings >{WIND_THRESHOLD}kt)")
-            # Show top times
             top = sorted(w["times"], key=lambda x: x["value"], reverse=True)[:3]
-            pacific = timezone(timedelta(hours=-7))
             for t in top:
                 if t.get("time"):
-                    pt_time = datetime.fromtimestamp(t["time"] / 1000, tz=pacific)
+                    pt_time = datetime.fromtimestamp(t["time"] / 1000, tz=PACIFIC)
                     lines.append(f"  {pt_time.strftime('%a %-I%p')}: {t['value']:.0f}kt")
         lines.append("")
         lines.append("https://bigwavedave.ca/jerichobch.html?site=20")
@@ -202,7 +195,7 @@ async def main():
             print(message, flush=True)
             print("---", flush=True)
         else:
-            print("WARNING: NTFY_TOPIC not set. Skipping notification.", flush=True)
+            print("WARNING: NTFY_TOPIC not set.", flush=True)
     else:
         print(f"\nNo wind >{WIND_THRESHOLD}kt in forecast. All clear.", flush=True)
 
