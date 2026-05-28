@@ -6,10 +6,14 @@ on:
     - cron: '0 23 * * *'
   workflow_dispatch:
 
+concurrency:
+  group: wind-alert
+  cancel-in-progress: false
+
 jobs:
   check-wind:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     env:
       PYTHONUNBUFFERED: '1'
     steps:
@@ -17,11 +21,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          playwright install chromium
-          playwright install-deps chromium
+          cache: pip
+      - run: pip install -r requirements.txt
       - name: Run wind check
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
