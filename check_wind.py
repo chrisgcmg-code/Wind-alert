@@ -16,7 +16,8 @@ from dataclasses import dataclass
 from functools import partial
 from zoneinfo import ZoneInfo
 
-import requests
+from curl_cffi import requests
+from curl_cffi.requests.exceptions import RequestException
 
 # If True, use Model 2 alone whenever it has data; fall back to Model 1 only when Model 2 is empty.
 # If False, intersect both models when both have data (suppresses lone-model alerts); fall back to
@@ -52,19 +53,12 @@ logging.basicConfig(
 )
 log = logging.getLogger("wind-alert")
 
-# Browser-like session — Cloudflare, which flags bare
-# python-requests UAs from cloud-runner IPs. We use a Chrome-flavoured header set
-# and prime the session against the public page before hitting the data endpoint.
-_session = requests.Session()
-_session.headers.update({
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Upgrade-Insecure-Requests": "1",
-})
+# Browser-impersonating session — bigwavedave sits behind Cloudflare, which
+# fingerprints requests at the TLS layer. curl_cffi's impersonate="chrome"
+# replays a real Chrome TLS handshake + header order, which header-only fixes
+# couldn't. We still prime the session against the public page first so any
+# clearance cookies attach.
+_session = requests.Session(impersonate="chrome")
 
 
 @dataclass
@@ -128,7 +122,7 @@ def prime_session(site_name: str) -> None:
     """Visit the public forecast page so Cloudflare can issue clearance cookies."""
     try:
         _session.get(forecast_page_url(site_name), timeout=HTTP_TIMEOUT_SECONDS)
-    except requests.RequestException as e:
+    except RequestException as e:
         log.warning("Failed to prime session for %s: %s", site_name, e)
 
 
@@ -143,7 +137,7 @@ def fetch_wind_data(date: dt.date, site_name: str) -> str:
         )
         resp.raise_for_status()
         return resp.text
-    except requests.RequestException as e:
+    except RequestException as e:
         log.warning("Failed to fetch %s for %s: %s", site_name, date, e)
         return ""
 
@@ -331,7 +325,7 @@ def send_notification(message: str) -> None:
         )
         resp.raise_for_status()
         log.info("Notification sent (status %d)", resp.status_code)
-    except requests.RequestException as e:
+    except RequestException as e:
         log.error("Failed to send notification: %s", e)
     log.info("Body:\n%s", message)
 
