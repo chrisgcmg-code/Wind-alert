@@ -52,6 +52,20 @@ logging.basicConfig(
 )
 log = logging.getLogger("wind-alert")
 
+# Browser-like session — Cloudflare, which flags bare
+# python-requests UAs from cloud-runner IPs. We use a Chrome-flavoured header set
+# and prime the session against the public page before hitting the data endpoint.
+_session = requests.Session()
+_session.headers.update({
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Upgrade-Insecure-Requests": "1",
+})
+
 
 @dataclass
 class WindReading:
@@ -110,11 +124,23 @@ def forecast_page_url(site_name: str) -> str:
     return f"https://bigwavedave.ca/{site['page']}?site={site['id']}"
 
 
+def prime_session(site_name: str) -> None:
+    """Visit the public forecast page so Cloudflare can issue clearance cookies."""
+    try:
+        _session.get(forecast_page_url(site_name), timeout=HTTP_TIMEOUT_SECONDS)
+    except requests.RequestException as e:
+        log.warning("Failed to prime session for %s: %s", site_name, e)
+
+
 def fetch_wind_data(date: dt.date, site_name: str) -> str:
     """Fetch the raw forecast text for a single day. Returns '' on failure."""
     url = f"https://bigwavedave.ca/sqlwind/extractwinddata.php?site={SITES[site_name]['id']}&day={date}"
     try:
-        resp = requests.get(url, timeout=HTTP_TIMEOUT_SECONDS)
+        resp = _session.get(
+            url,
+            timeout=HTTP_TIMEOUT_SECONDS,
+            headers={"Referer": forecast_page_url(site_name)},
+        )
         resp.raise_for_status()
         return resp.text
     except requests.RequestException as e:
@@ -321,6 +347,8 @@ def main() -> int:
     today = dt.datetime.now(PACIFIC_TIMEZONE).date()
     days = [today + dt.timedelta(days=i) for i in range(FORECAST_DAYS)]
     log.info("Checking days: %s", [fmt_date(d) for d in days])
+
+    prime_session(JERICHO_SITE_NAME)
 
     with ThreadPoolExecutor(max_workers=len(days)) as pool:
         results = list(pool.map(partial(analyze_day, site_name=JERICHO_SITE_NAME), days))
