@@ -80,7 +80,7 @@ Constants at the top of [check_wind.py](check_wind.py):
 
 | Constant                          | Default | Meaning                                                       |
 | --------------------------------- | ------- | ------------------------------------------------------------- |
-| `USE_MODEL_2_ONLY`                | `False` | If True, use Model 2 alone when it has data; fall back to Model 1 only when Model 2 is empty. If False, intersect both models when both have data (suppresses lone-model alerts); fall back to whichever single model has data otherwise. |
+| `USE_MODEL_2_ONLY`                | `False` | If True, ignore Model 1 entirely when both models have data (use Model 2 alone). If False, intersect both models when both have data (Model 1 must corroborate). Either way: Model 2 alone when only Model 2 has data; no alert when only Model 1 has data. |
 | `WIND_THRESHOLD_KTS`              | `10`    | Strict-greater threshold; `10` is *not* alerted on, `11` is. |
 | `WIND_SUSTAINED_TIME_MIN_HOURS`   | `2`     | An alert requires sustained wind over this many hours.        |
 | `WIND_DATAPOINT_TIME_DELTA_HOURS` | `1`     | Spacing between forecast readings (don't change unless upstream changes). |
@@ -118,14 +118,21 @@ A handful of decisions that wouldn't be obvious from the code:
     intervals. This *correctly* suppresses an alert when one model predicts
     wind and the other (with data) disagrees.
   - Only Model 2 has raw data → use Model 2's intervals.
-  - Only Model 1 has raw data → fall back to Model 1's intervals.
+  - Only Model 1 has raw data → suppress the alert. Model 1 is the
+    less-trusted source (read off output plots), so we never alert on
+    it alone; the day shows up as "Model 2 unavailable" in any alert
+    that fires for other days.
   - Neither has raw data → empty (the day is reported as "no forecast data").
 - **Model trust hierarchy.** Model 2 (HRDPS, raw data) is the trusted baseline;
   Model 1 (WRF-GFS, scraped from output plots) is blocky and noisy. When the
   upstream has both, the intersection logic gives a high-confidence signal.
-- **Per-day reporting always carries a model attribution.** Even on calm days,
-  the alert line includes `(via 1, 2)` or `(via 2)` so it's clear which
-  forecast was consulted.
+- **Per-day reporting carries model attribution when Model 2 was consulted.**
+  Calm and windy days that ran through the strategy include `(via 1, 2)` or
+  `(via 2)` so it's clear which forecast was used. The two exceptions are
+  `"no forecast data available"` (upstream returned nothing) and `"Model 2
+  unavailable"` (only Model 1 came back, suppression triggered) — neither
+  carries a `(via …)` tag because there was no Model-2-backed analysis to
+  attribute.
 - **Failed HTTP requests degrade gracefully.** A failed `extractwinddata.php`
   fetch logs a warning and returns `""`, which propagates to a "no forecast
   data" report for that day rather than crashing.

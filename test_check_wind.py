@@ -112,11 +112,13 @@ def test_combine_neither_model_has_data():
     assert intervals == []
 
 
-def test_combine_only_model_1_has_raw_data_uses_m1():
+def test_combine_only_model_1_has_raw_data_suppresses_alert():
+    # Model 1 alone is the less-trusted source (output-plot scrape) — we never
+    # alert on it without Model 2 corroboration, regardless of USE_MODEL_2_ONLY.
     iv = Interval(dt.datetime(2026, 5, 27, 8), dt.datetime(2026, 5, 27, 12))
     used, intervals = combine_intervals({MODEL_1_NAME: [iv], MODEL_2_NAME: []}, ONLY_M1_RAW)
-    assert used == [MODEL_1_NAME]
-    assert intervals == [iv]
+    assert used == []
+    assert intervals == []
 
 
 def test_combine_only_model_2_has_raw_data_uses_m2():
@@ -180,15 +182,24 @@ def test_choose_intervals_use_model_2_only_on(monkeypatch):
     assert intervals == [iv2]  # Model 2 only, no intersection math
 
 
-def test_choose_intervals_use_model_2_only_falls_back_when_no_m2_raw(monkeypatch):
-    monkeypatch.setattr(check_wind, "USE_MODEL_2_ONLY", True)
+def test_choose_intervals_suppresses_when_no_m2_raw_regardless_of_toggle(monkeypatch):
+    # When Model 2 raw data is missing, we never alert on Model 1 alone — true
+    # for both toggle states.
     iv1 = Interval(dt.datetime(2026, 5, 27, 8), dt.datetime(2026, 5, 27, 12))
-    used, intervals = choose_intervals(
+    args = (
         {MODEL_1_NAME: [iv1], MODEL_2_NAME: []},
-        {MODEL_1_NAME: ["x"], MODEL_2_NAME: []},  # no Model 2 raw data
+        {MODEL_1_NAME: ["x"], MODEL_2_NAME: []},
     )
-    assert used == [MODEL_1_NAME]
-    assert intervals == [iv1]
+
+    monkeypatch.setattr(check_wind, "USE_MODEL_2_ONLY", True)
+    used, intervals = choose_intervals(*args)
+    assert used == []
+    assert intervals == []
+
+    monkeypatch.setattr(check_wind, "USE_MODEL_2_ONLY", False)
+    used, intervals = choose_intervals(*args)
+    assert used == []
+    assert intervals == []
 
 
 def test_choose_intervals_off_uses_combine(monkeypatch):
@@ -310,6 +321,20 @@ def test_build_message_multi_interval_day():
     assert "> 10:00 AM - 5:00 PM" in msg
 
 
+def test_build_message_model_2_unavailable_is_distinct_from_no_data():
+    results = [DayResult(
+        date=dt.date(2026, 5, 28),
+        models_used=[],
+        intervals=[],
+    )]
+    msg = build_message(results, "jericho")
+    assert "Thu May 28: Model 2 unavailable" in msg
+    # Different wording than the truly-no-data case
+    assert "no forecast data available" not in msg
+    # No misleading "(via ):" header
+    assert "(via )" not in msg
+
+
 def test_build_message_cross_day_interval_uses_full_datetime():
     results = [DayResult(
         date=dt.date(2026, 5, 27),
@@ -361,6 +386,27 @@ def test_analyze_day_intersection_pipeline(monkeypatch):
     assert result.intervals == [Interval(
         dt.datetime(2026, 5, 27, 10), dt.datetime(2026, 5, 27, 12),
     )]
+
+
+def test_analyze_day_model_1_only_suppresses_alert(monkeypatch):
+    """When upstream returns only Model 1 data, the day is suppressed: models_used=[]
+    and intervals=[] so it doesn't trigger a notification by itself."""
+    monkeypatch.setattr(check_wind, "USE_MODEL_2_ONLY", False)
+    t = WIND_THRESHOLD_KTS
+    fake_raw = (
+        "header\n"
+        "-9998\n"  # Model 1 only, predicts wind 10:00-12:00
+        f"2026-05-28 10:00:00\t{t + 5}\tNW\n"
+        f"2026-05-28 11:00:00\t{t + 5}\tNW\n"
+        f"2026-05-28 12:00:00\t{t + 5}\tNW\n"
+    )
+    monkeypatch.setattr(check_wind, "fetch_wind_data", lambda *_: fake_raw)
+
+    result = analyze_day(dt.date(2026, 5, 28), "jericho")
+
+    assert result.date == dt.date(2026, 5, 28)
+    assert result.models_used == []
+    assert result.intervals == []  # not None — we did receive data, just not Model 2
 
 
 def test_analyze_day_use_model_2_only_ignores_model_1_wind(monkeypatch):
