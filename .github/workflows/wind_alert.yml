@@ -21,9 +21,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: pip
-      - run: pip install -r requirements.txt
+      - name: Cache venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py3.12-${{ hashFiles('requirements.txt') }}
+      - name: Install (cache miss only)
+        run: |
+          if [ ! -d .venv ]; then
+            python -m venv .venv
+            .venv/bin/pip install -r requirements.txt
+          fi
       - name: Run wind check
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-        run: python -u check_wind.py
+        run: .venv/bin/python -u check_wind.py

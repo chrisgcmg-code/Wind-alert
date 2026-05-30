@@ -19,9 +19,9 @@ from zoneinfo import ZoneInfo
 from curl_cffi import requests
 from curl_cffi.requests.exceptions import RequestException
 
-# If True, use Model 2 alone whenever it has data; fall back to Model 1 only when Model 2 is empty.
-# If False, intersect both models when both have data (suppresses lone-model alerts); fall back to
-# whichever single model has data otherwise.
+# If True, ignore Model 1 entirely when both models have data (use Model 2 alone).
+# If False, intersect both models when both have data (Model 1 must corroborate Model 2).
+# Either way: Model 2 alone when only Model 2 has data; no alert when only Model 1 has data.
 USE_MODEL_2_ONLY = False
 
 WIND_THRESHOLD_KTS = 10
@@ -48,7 +48,7 @@ NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "")
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
+    format="%(asctime)s.%(msecs)03d %(levelname)s %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger("wind-alert")
@@ -77,10 +77,11 @@ class Interval:
 class DayResult:
     """One day's forecast analysis.
 
-    intervals semantics:
-        None        — upstream returned no data
-        []          — data found, no sustained wind
-        [Interval]  — sustained wind windows
+    intervals/models_used combinations:
+        intervals is None              — upstream returned no data at all
+        intervals=[],  models_used=[]  — Model 2 unavailable; Model-1-only alert suppressed
+        intervals=[],  models_used=[X] — data found, no sustained wind
+        intervals=[..]                 — sustained wind windows
     """
     date: dt.date
     models_used: list[str]
@@ -212,17 +213,17 @@ def combine_intervals(
       may be empty if they disagree, which correctly suppresses lone-model
       alerts. models_used = [model1, model2].
     - Only Model 2 has raw data: return Model 2's intervals as-is.
-    - Only Model 1 has raw data (Model 2 unavailable): fall back to Model 1.
+    - Only Model 1 has raw data (Model 2 unavailable): suppress — Model 1 is
+      the less-trusted source (read off output plots), so we never alert on
+      it alone. ([], []).
     - Neither has data: ([], []).
     """
     m1_has_data = bool(models_raw[MODEL_1_NAME])
     m2_has_data = bool(models_raw[MODEL_2_NAME])
 
-    if not m1_has_data and not m2_has_data:
-        return [], []
-
     if not m2_has_data:
-        return [MODEL_1_NAME], model_intervals[MODEL_1_NAME]
+        # Covers both "neither" and "only Model 1" — Model 1 alone never alerts.
+        return [], []
 
     if not m1_has_data:
         return [MODEL_2_NAME], model_intervals[MODEL_2_NAME]
@@ -281,6 +282,8 @@ def analyze_day(date: dt.date, site_name: str) -> DayResult:
         log.info("%s sustained windows (sources: %s):", fmt_date(date), models_used)
         for iv in sustained:
             log.info("  %s -> %s", fmt_datetime(iv.start), fmt_datetime(iv.end))
+    elif not models_used:
+        log.info("%s: Model 2 unavailable; suppressing Model-1-only alert", fmt_date(date))
     else:
         log.info("%s: no sustained windy periods", fmt_date(date))
 
@@ -293,6 +296,8 @@ def build_message(results: list[DayResult], site_name: str) -> str:
     for day in results:
         if day.intervals is None:
             lines.append(f"{fmt_date(day.date)}: no forecast data available")
+        elif not day.models_used:
+            lines.append(f"{fmt_date(day.date)}: Model 2 unavailable")
         elif not day.intervals:
             lines.append(f"{fmt_date(day.date)} (via {fmt_models(day.models_used)}):")
             lines.append("> no sustained wind")
