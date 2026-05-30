@@ -48,7 +48,7 @@ NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "")
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
+    format="%(asctime)s.%(msecs)03d %(levelname)s %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger("wind-alert")
