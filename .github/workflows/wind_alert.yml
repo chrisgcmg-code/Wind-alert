@@ -17,8 +17,8 @@ jobs:
     env:
       PYTHONUNBUFFERED: '1'
     steps:
+      - uses: actions/setup-python@v7
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Cache venv
